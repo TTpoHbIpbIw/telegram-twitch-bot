@@ -34,7 +34,7 @@ processed_ids = set()
 app = Flask(__name__)
 
 # =============================
-# ЗАГРУЗКА ФАЙЛА
+# ФАЙЛ
 # =============================
 def load_announce():
     global last_announce, last_announce_date
@@ -55,7 +55,7 @@ def save_announce(message):
 load_announce()
 
 # =============================
-# TWITCH LISTENER
+# TWITCH
 # =============================
 def twitch_listener():
     sock = socket.socket()
@@ -127,10 +127,20 @@ def telegram_webhook():
     data = request.get_json()
     update = Update.de_json(data, telegram_app.bot)
 
+    print("UPDATE RECEIVED")
+
+    text = None
+
     if update.channel_post:
         text = update.channel_post.text or update.channel_post.caption
 
-        if text and TRIGGER in text.lower():
+    elif update.message:
+        text = update.message.text or update.message.caption
+
+    if text:
+        print("TEXT:", text)
+
+        if TRIGGER in text.lower():
             text_no_tags = re.sub(r"#\w+", "", text)
             clean_text = " ".join(text_no_tags.split())
             final_message = f"📢 {clean_text} 🔴 twitch.tv/{CHANNEL_NAME}"
@@ -147,7 +157,6 @@ def telegram_webhook():
 # MAIN
 # =============================
 if __name__ == "__main__":
-    # Ставим webhook вручную через API один раз (см. ниже)
     threading.Thread(target=twitch_listener, daemon=True).start()
 
     port = int(os.environ.get("PORT", 10000))
