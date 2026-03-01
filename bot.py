@@ -5,24 +5,9 @@ import socket
 import os
 import re
 from flask import Flask
-from threading import Thread
 from datetime import datetime
 import time
-
-# =============================
-# WEB SERVER (для Render Free)
-# =============================
-app_web = Flask(__name__)
-
-@app_web.route('/')
-def home():
-    return "Bot is running!"
-
-def run_web():
-    port = int(os.environ.get("PORT", 10000))
-    app_web.run(host="0.0.0.0", port=port)
-
-Thread(target=run_web).start()
+import threading
 
 # =============================
 # НАСТРОЙКИ
@@ -31,10 +16,10 @@ TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 TWITCH_NICK = os.environ["TWITCH_NICK"]  # TTpoHbIpbIw_bot
 TWITCH_OAUTH = os.environ["TWITCH_OAUTH"]
 
-CHANNEL_NAME = "TTpoHbIpbIw"  # твой основной канал
+CHANNEL_NAME = "TTpoHbIpbIw"
 TWITCH_CHANNEL = f"#{CHANNEL_NAME}"
 
-CHANNEL_OWNER = "ttpohbipbiw"  # твой основной ник маленькими буквами
+CHANNEL_OWNER = "ttpohbipbiw"
 TRIGGER = "#анонс"
 COOLDOWN_SECONDS = 30
 ANNOUNCE_FILE = "announce.txt"
@@ -44,7 +29,16 @@ last_announce_date = None
 last_command_time = 0
 
 # =============================
-# ЗАГРУЗКА ИЗ ФАЙЛА
+# WEB SERVER (Render Free)
+# =============================
+app_web = Flask(__name__)
+
+@app_web.route('/')
+def home():
+    return "Bot is running!"
+
+# =============================
+# ФАЙЛ
 # =============================
 def load_announce():
     global last_announce, last_announce_date
@@ -57,23 +51,12 @@ def load_announce():
                     lines[1].strip(), "%Y-%m-%d"
                 ).date()
 
-# =============================
-# СОХРАНЕНИЕ В ФАЙЛ
-# =============================
 def save_announce(message):
     with open(ANNOUNCE_FILE, "w", encoding="utf-8") as f:
         f.write(message + "\n")
         f.write(str(datetime.now().date()))
 
 load_announce()
-
-# =============================
-# ОТПРАВКА СООБЩЕНИЯ
-# =============================
-def send_message(sock, message):
-    sock.send(
-        f"PRIVMSG {TWITCH_CHANNEL} :{message[:450]}\r\n".encode("utf-8")
-    )
 
 # =============================
 # TELEGRAM
@@ -91,13 +74,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             last_announce = final_message
             last_announce_date = datetime.now().date()
-
             save_announce(final_message)
 
 # =============================
-# TWITCH LISTENER
+# TWITCH
 # =============================
-def listen_to_twitch():
+def twitch_listener():
     global last_command_time
 
     sock = socket.socket()
@@ -114,46 +96,52 @@ def listen_to_twitch():
             continue
 
         if "PRIVMSG" in resp:
-            if resp.count("PRIVMSG") > 1:
-    continue
             prefix = resp.split("PRIVMSG")[0]
             username = prefix.split("!")[0].replace(":", "").lower()
             message = resp.split("PRIVMSG")[1].split(":", 1)[1].strip()
 
-            # === АНТИ-ЛУП ===
+            # анти-луп
             if username == TWITCH_NICK.lower():
                 continue
 
             if message.lower() == "!анонс":
                 today = datetime.now().date()
 
-                # === БЕЗ КУЛДАУНА ДЛЯ ТЕБЯ ===
                 if username == CHANNEL_OWNER:
                     if last_announce and last_announce_date == today:
-                        send_message(sock, last_announce)
+                        sock.send(f"PRIVMSG {TWITCH_CHANNEL} :{last_announce}\r\n".encode("utf-8"))
                     else:
-                        send_message(sock, "Сегодня не было анонса")
+                        sock.send(f"PRIVMSG {TWITCH_CHANNEL} :Сегодня не было анонса\r\n".encode("utf-8"))
                     continue
 
-                # === КУЛДАУН ДЛЯ ЗРИТЕЛЕЙ ===
                 now = time.time()
                 if now - last_command_time < COOLDOWN_SECONDS:
-                    send_message(sock, "Подожди немного перед повторным вызовом команды")
+                    sock.send(f"PRIVMSG {TWITCH_CHANNEL} :Подожди немного перед повторным вызовом команды\r\n".encode("utf-8"))
                     continue
 
                 last_command_time = now
 
                 if last_announce and last_announce_date == today:
-                    send_message(sock, last_announce)
+                    sock.send(f"PRIVMSG {TWITCH_CHANNEL} :{last_announce}\r\n".encode("utf-8"))
                 else:
-                    send_message(sock, "Сегодня не было анонса")
-
-if os.environ.get("RUN_MAIN") != "true":
-    Thread(target=listen_to_twitch, daemon=True).start()
+                    sock.send(f"PRIVMSG {TWITCH_CHANNEL} :Сегодня не было анонса\r\n".encode("utf-8"))
 
 # =============================
-# ЗАПУСК TELEGRAM
+# MAIN
 # =============================
-telegram_app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-telegram_app.add_handler(MessageHandler(filters.ALL, handle_message))
-telegram_app.run_polling()
+def main():
+    # запускаем Twitch один раз
+    threading.Thread(target=twitch_listener, daemon=True).start()
+
+    # запускаем Telegram
+    telegram_app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    telegram_app.add_handler(MessageHandler(filters.ALL, handle_message))
+
+    # запускаем Flask (без reloader!)
+    port = int(os.environ.get("PORT", 10000))
+    threading.Thread(target=lambda: app_web.run(host="0.0.0.0", port=port, use_reloader=False), daemon=True).start()
+
+    telegram_app.run_polling()
+
+if __name__ == "__main__":
+    main()
