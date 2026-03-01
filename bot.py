@@ -6,16 +6,16 @@ import threading
 from datetime import datetime
 from flask import Flask, request
 from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes
+from telegram.ext import ApplicationBuilder
 
 # =============================
 # НАСТРОЙКИ
 # =============================
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
-TWITCH_NICK = os.environ["TWITCH_NICK"]
+TWITCH_NICK = os.environ["TWITCH_NICK"]          # TTpoHbIpbIw_bot
 TWITCH_OAUTH = os.environ["TWITCH_OAUTH"]
 
-CHANNEL_NAME = "TTpoHbIpbIw"
+CHANNEL_NAME = "TTpoHbIpbIw"                     # твой канал
 TWITCH_CHANNEL = f"#{CHANNEL_NAME}"
 CHANNEL_OWNER = "ttpohbipbiw"
 
@@ -27,13 +27,15 @@ last_announce = None
 last_announce_date = None
 user_cooldowns = {}
 
+twitch_started = False   # защита от двойного запуска
+
 # =============================
 # FLASK
 # =============================
 app = Flask(__name__)
 
 # =============================
-# ЗАГРУЗКА
+# ФАЙЛ
 # =============================
 def load_announce():
     global last_announce, last_announce_date
@@ -42,7 +44,9 @@ def load_announce():
             lines = f.readlines()
             if len(lines) >= 2:
                 last_announce = lines[0].strip()
-                last_announce_date = datetime.strptime(lines[1].strip(), "%Y-%m-%d").date()
+                last_announce_date = datetime.strptime(
+                    lines[1].strip(), "%Y-%m-%d"
+                ).date()
 
 def save_announce(message):
     with open(ANNOUNCE_FILE, "w", encoding="utf-8") as f:
@@ -52,7 +56,7 @@ def save_announce(message):
 load_announce()
 
 # =============================
-# TWITCH
+# TWITCH LISTENER
 # =============================
 def twitch_listener():
     sock = socket.socket()
@@ -73,6 +77,7 @@ def twitch_listener():
             username = prefix.split("!")[0].replace(":", "").lower()
             message = resp.split("PRIVMSG")[1].split(":",1)[1].strip()
 
+            # анти-луп
             if username == TWITCH_NICK.lower():
                 continue
 
@@ -84,6 +89,7 @@ def twitch_listener():
                 else:
                     now = time.time()
                     last_used = user_cooldowns.get(username, 0)
+
                     if now - last_used < COOLDOWN_SECONDS:
                         reply = "Подожди немного перед повторным вызовом команды"
                     else:
@@ -120,10 +126,16 @@ async def telegram_webhook():
 # MAIN
 # =============================
 def main():
+    global twitch_started
+
+    # ставим webhook
     webhook_url = os.environ.get("RENDER_EXTERNAL_URL")
     telegram_app.bot.set_webhook(webhook_url)
 
-    threading.Thread(target=twitch_listener, daemon=True).start()
+    # запускаем Twitch только один раз
+    if not twitch_started:
+        twitch_started = True
+        threading.Thread(target=twitch_listener, daemon=True).start()
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
