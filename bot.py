@@ -26,7 +26,7 @@ ANNOUNCE_FILE = "announce.txt"
 
 last_announce = None
 last_announce_date = None
-last_command_time = 0
+user_cooldowns = {}  # <-- теперь кулдаун отдельно для каждого
 
 # =============================
 # WEB SERVER (Render Free)
@@ -80,7 +80,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # TWITCH
 # =============================
 def twitch_listener():
-    global last_command_time
 
     sock = socket.socket()
     sock.connect(("irc.chat.twitch.tv", 6667))
@@ -107,6 +106,7 @@ def twitch_listener():
             if message.lower() == "!анонс":
                 today = datetime.now().date()
 
+                # владелец без кулдауна
                 if username == CHANNEL_OWNER:
                     if last_announce and last_announce_date == today:
                         sock.send(f"PRIVMSG {TWITCH_CHANNEL} :{last_announce}\r\n".encode("utf-8"))
@@ -115,11 +115,15 @@ def twitch_listener():
                     continue
 
                 now = time.time()
-                if now - last_command_time < COOLDOWN_SECONDS:
+
+                # проверка кулдауна конкретного пользователя
+                last_used = user_cooldowns.get(username, 0)
+
+                if now - last_used < COOLDOWN_SECONDS:
                     sock.send(f"PRIVMSG {TWITCH_CHANNEL} :Подожди немного перед повторным вызовом команды\r\n".encode("utf-8"))
                     continue
 
-                last_command_time = now
+                user_cooldowns[username] = now
 
                 if last_announce and last_announce_date == today:
                     sock.send(f"PRIVMSG {TWITCH_CHANNEL} :{last_announce}\r\n".encode("utf-8"))
@@ -130,16 +134,16 @@ def twitch_listener():
 # MAIN
 # =============================
 def main():
-    # запускаем Twitch один раз
     threading.Thread(target=twitch_listener, daemon=True).start()
 
-    # запускаем Telegram
     telegram_app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     telegram_app.add_handler(MessageHandler(filters.ALL, handle_message))
 
-    # запускаем Flask (без reloader!)
     port = int(os.environ.get("PORT", 10000))
-    threading.Thread(target=lambda: app_web.run(host="0.0.0.0", port=port, use_reloader=False), daemon=True).start()
+    threading.Thread(
+        target=lambda: app_web.run(host="0.0.0.0", port=port, use_reloader=False),
+        daemon=True
+    ).start()
 
     telegram_app.run_polling()
 
