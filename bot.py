@@ -10,7 +10,7 @@ TWITCH_NICK = os.environ["TWITCH_NICK"]
 TWITCH_CHANNEL = f"#{TWITCH_NICK}"
 TWITCH_OAUTH = os.environ["TWITCH_OAUTH"]
 
-HASHTAG = "#анонс"
+TRIGGER = "#анонс"
 
 def send_to_twitch(message):
     sock = socket.socket()
@@ -26,18 +26,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         text = None
 
-        # Если обычный текст
         if update.channel_post.text:
             text = update.channel_post.text
-
-        # Если фото/видео с подписью
         elif update.channel_post.caption:
             text = update.channel_post.caption
 
-        if text and HASHTAG in text.lower():
-            clean_text = re.sub(HASHTAG, "", text, flags=re.IGNORECASE).strip()
-            clean_text = clean_text.replace("\n", " ")
+        if text and TRIGGER in text.lower():
+
+            # Удаляем ВСЕ хэштеги
+            text_no_tags = re.sub(r"#\w+", "", text)
+
+            # Убираем лишние переносы строк
+            clean_text = " ".join(text_no_tags.split())
+
             final_message = f"📢 {clean_text} 🔴 twitch.tv/{TWITCH_NICK}"
+
             send_to_twitch(final_message)
 
 app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
