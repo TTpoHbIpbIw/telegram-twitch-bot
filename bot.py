@@ -21,13 +21,21 @@ CHANNEL_OWNER = "ttpohbipbiw"
 
 TRIGGER = "#анонс"
 COOLDOWN_SECONDS = 30
+GLOBAL_COOLDOWN = 3  # защита от массового спама
 ANNOUNCE_FILE = "announce.txt"
 
 last_announce = None
 last_announce_date = None
+last_announce_time = 0
+
 user_cooldowns = {}
 processed_ids = set()
+
+last_global_command_time = 0
+last_sent_message = None
+
 sock = None
+twitch_started = False
 
 # =============================
 # FLASK
@@ -39,7 +47,7 @@ def home():
     return "Bot is running"
 
 # =============================
-# ФАЙЛ СОХРАНЕНИЯ
+# СОХРАНЕНИЕ АНОНСА
 # =============================
 def load_announce():
     global last_announce, last_announce_date
@@ -66,7 +74,8 @@ telegram_app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
 @app.route("/telegram", methods=["POST"])
 def telegram_webhook():
-    global last_announce, last_announce_date, sock
+    global last_announce, last_announce_date, last_announce_time
+    global sock, last_sent_message
 
     data = request.get_json(force=True, silent=True)
     update = Update.de_json(data, telegram_app.bot)
@@ -84,16 +93,20 @@ def telegram_webhook():
         clean_text = " ".join(text_no_tags.split())
         final_message = f"📢 {clean_text} 🔴 twitch.tv/{CHANNEL_NAME}"
 
+        # 🔒 Защита от двойного автопоста
+        if final_message == last_announce and time.time() - last_announce_time < 10:
+            return jsonify({"status": "duplicate blocked"})
+
         last_announce = final_message
         last_announce_date = datetime.now().date()
+        last_announce_time = time.time()
+
         save_announce(final_message)
 
-        print("ANNOUNCE SAVED", flush=True)
-
-        # 🔥 СРАЗУ отправляем в Twitch
-        if sock:
+        # Авто-пост в Twitch
+        if sock and final_message != last_sent_message:
             sock.send(f"PRIVMSG {TWITCH_CHANNEL} :{final_message}\r\n".encode())
-            print("AUTO SENT TO TWITCH", flush=True)
+            last_sent_message = final_message
 
     return jsonify({"status": "ok"})
 
@@ -101,7 +114,13 @@ def telegram_webhook():
 # TWITCH IRC
 # =============================
 def twitch_listener():
-    global sock
+    global sock, twitch_started
+    global last_global_command_time, last_sent_message
+
+    if twitch_started:
+        return
+
+    twitch_started = True
 
     sock = socket.socket()
     sock.connect(("irc.chat.twitch.tv", 6667))
@@ -128,12 +147,13 @@ def twitch_listener():
                         message_id = tag.split("=")[1]
                         break
 
+            # 🔒 Анти-дубликат по ID
             if message_id and message_id in processed_ids:
                 continue
 
             if message_id:
                 processed_ids.add(message_id)
-                if len(processed_ids) > 100:
+                if len(processed_ids) > 200:
                     processed_ids.clear()
 
             prefix = resp.split("PRIVMSG")[0]
@@ -144,24 +164,35 @@ def twitch_listener():
                 continue
 
             if message.lower() == "!анонс":
-                today = datetime.now().date()
 
+                now = time.time()
+
+                # 🌍 Глобальный анти-спам
+                if now - last_global_command_time < GLOBAL_COOLDOWN:
+                    continue
+
+                last_global_command_time = now
+
+                # 👑 Без кулдауна для владельца
                 if username != CHANNEL_OWNER:
-                    now = time.time()
                     last_used = user_cooldowns.get(username, 0)
 
                     if now - last_used < COOLDOWN_SECONDS:
-                        sock.send(f"PRIVMSG {TWITCH_CHANNEL} :Подожди немного перед повторным вызовом команды\r\n".encode())
                         continue
 
                     user_cooldowns[username] = now
+
+                today = datetime.now().date()
 
                 if last_announce and last_announce_date == today:
                     reply = last_announce
                 else:
                     reply = "Сегодня не было анонса"
 
-                sock.send(f"PRIVMSG {TWITCH_CHANNEL} :{reply}\r\n".encode())
+                # 🔒 Защита от повторной отправки того же сообщения
+                if reply != last_sent_message:
+                    sock.send(f"PRIVMSG {TWITCH_CHANNEL} :{reply}\r\n".encode())
+                    last_sent_message = reply
 
 # =============================
 # MAIN
