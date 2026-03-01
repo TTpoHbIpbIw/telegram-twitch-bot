@@ -4,9 +4,9 @@ import socket
 import time
 import threading
 from datetime import datetime
-from flask import Flask
+from flask import Flask, request, jsonify
 from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder
 
 # =============================
 # НАСТРОЙКИ
@@ -29,20 +29,12 @@ user_cooldowns = {}
 processed_ids = set()
 
 # =============================
-# FLASK (для Render)
+# FLASK
 # =============================
 app = Flask(__name__)
 
-@app.route("/")
-def home():
-    return "Bot is running"
-
-def run_web():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port, use_reloader=False)
-
 # =============================
-# ФАЙЛ
+# ЗАГРУЗКА ФАЙЛА
 # =============================
 def load_announce():
     global last_announce, last_announce_date
@@ -63,30 +55,7 @@ def save_announce(message):
 load_announce()
 
 # =============================
-# TELEGRAM
-# =============================
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global last_announce, last_announce_date
-
-    print("TELEGRAM UPDATE RECEIVED")
-
-    if update.channel_post:
-        text = update.channel_post.text or update.channel_post.caption
-        print("CHANNEL POST:", text)
-
-        if text and TRIGGER in text.lower():
-            text_no_tags = re.sub(r"#\w+", "", text)
-            clean_text = " ".join(text_no_tags.split())
-            final_message = f"📢 {clean_text} 🔴 twitch.tv/{CHANNEL_NAME}"
-
-            last_announce = final_message
-            last_announce_date = datetime.now().date()
-            save_announce(final_message)
-
-            print("ANNOUNCE SAVED")
-
-# =============================
-# TWITCH
+# TWITCH LISTENER
 # =============================
 def twitch_listener():
     sock = socket.socket()
@@ -147,16 +116,39 @@ def twitch_listener():
                 sock.send(f"PRIVMSG {TWITCH_CHANNEL} :{reply}\r\n".encode())
 
 # =============================
+# TELEGRAM WEBHOOK
+# =============================
+telegram_app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+@app.route("/", methods=["POST"])
+def telegram_webhook():
+    global last_announce, last_announce_date
+
+    data = request.get_json()
+    update = Update.de_json(data, telegram_app.bot)
+
+    if update.channel_post:
+        text = update.channel_post.text or update.channel_post.caption
+
+        if text and TRIGGER in text.lower():
+            text_no_tags = re.sub(r"#\w+", "", text)
+            clean_text = " ".join(text_no_tags.split())
+            final_message = f"📢 {clean_text} 🔴 twitch.tv/{CHANNEL_NAME}"
+
+            last_announce = final_message
+            last_announce_date = datetime.now().date()
+            save_announce(final_message)
+
+            print("ANNOUNCE SAVED")
+
+    return jsonify({"status": "ok"})
+
+# =============================
 # MAIN
 # =============================
-def main():
-    threading.Thread(target=run_web, daemon=True).start()
+if __name__ == "__main__":
+    # Ставим webhook вручную через API один раз (см. ниже)
     threading.Thread(target=twitch_listener, daemon=True).start()
 
-    telegram_app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    telegram_app.add_handler(MessageHandler(filters.ALL, handle_message))
-
-    telegram_app.run_polling()
-
-if __name__ == "__main__":
-    main()
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
