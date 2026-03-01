@@ -29,7 +29,7 @@ user_cooldowns = {}
 processed_ids = set()
 
 # =============================
-# FLASK (только чтобы Render не засыпал)
+# FLASK (для Render)
 # =============================
 app = Flask(__name__)
 
@@ -63,13 +63,17 @@ def save_announce(message):
 load_announce()
 
 # =============================
-# TELEGRAM (POLLING)
+# TELEGRAM
 # =============================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global last_announce, last_announce_date
 
+    print("TELEGRAM UPDATE RECEIVED")
+
     if update.channel_post:
         text = update.channel_post.text or update.channel_post.caption
+        print("CHANNEL POST:", text)
+
         if text and TRIGGER in text.lower():
             text_no_tags = re.sub(r"#\w+", "", text)
             clean_text = " ".join(text_no_tags.split())
@@ -78,6 +82,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             last_announce = final_message
             last_announce_date = datetime.now().date()
             save_announce(final_message)
+
+            print("ANNOUNCE SAVED")
 
 # =============================
 # TWITCH
@@ -150,7 +156,7 @@ def main():
     telegram_app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     telegram_app.add_handler(MessageHandler(filters.ALL, handle_message))
 
-    telegram_app.run_polling(drop_pending_updates=True)
+    telegram_app.run_polling()
 
 if __name__ == "__main__":
     main()
