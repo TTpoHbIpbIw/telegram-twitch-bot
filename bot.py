@@ -19,7 +19,6 @@ CHANNEL_NAME = "TTpoHbIpbIw"
 TWITCH_CHANNEL = f"#{CHANNEL_NAME}"
 CHANNEL_OWNER = "ttpohbipbiw"
 
-TRIGGER = "#анонс"
 COOLDOWN_SECONDS = 30
 ANNOUNCE_FILE = "announce.txt"
 
@@ -32,27 +31,6 @@ processed_ids = set()
 # FLASK
 # =============================
 app = Flask(__name__)
-
-# =============================
-# ФАЙЛ
-# =============================
-def load_announce():
-    global last_announce, last_announce_date
-    if os.path.exists(ANNOUNCE_FILE):
-        with open(ANNOUNCE_FILE, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-            if len(lines) >= 2:
-                last_announce = lines[0].strip()
-                last_announce_date = datetime.strptime(
-                    lines[1].strip(), "%Y-%m-%d"
-                ).date()
-
-def save_announce(message):
-    with open(ANNOUNCE_FILE, "w", encoding="utf-8") as f:
-        f.write(message + "\n")
-        f.write(str(datetime.now().date()))
-
-load_announce()
 
 # =============================
 # TWITCH
@@ -116,40 +94,36 @@ def twitch_listener():
                 sock.send(f"PRIVMSG {TWITCH_CHANNEL} :{reply}\r\n".encode())
 
 # =============================
-# TELEGRAM WEBHOOK
+# TELEGRAM WEBHOOK (ДИАГНОСТИКА)
 # =============================
 telegram_app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
 @app.route("/", methods=["POST"])
 def telegram_webhook():
-    global last_announce, last_announce_date
+    data = request.get_json(force=True, silent=True)
 
-    data = request.get_json()
+    print("===== TELEGRAM REQUEST RECEIVED =====")
+    print("RAW DATA:", data)
+
+    if not data:
+        print("NO DATA IN REQUEST")
+        return jsonify({"status": "no data"})
+
     update = Update.de_json(data, telegram_app.bot)
 
-    print("UPDATE RECEIVED")
+    print("UPDATE OBJECT:", update)
 
     text = None
 
     if update.channel_post:
+        print("TYPE: channel_post")
         text = update.channel_post.text or update.channel_post.caption
 
     elif update.message:
+        print("TYPE: message")
         text = update.message.text or update.message.caption
 
-    if text:
-        print("TEXT:", text)
-
-        if TRIGGER in text.lower():
-            text_no_tags = re.sub(r"#\w+", "", text)
-            clean_text = " ".join(text_no_tags.split())
-            final_message = f"📢 {clean_text} 🔴 twitch.tv/{CHANNEL_NAME}"
-
-            last_announce = final_message
-            last_announce_date = datetime.now().date()
-            save_announce(final_message)
-
-            print("ANNOUNCE SAVED")
+    print("TEXT EXTRACTED:", text)
 
     return jsonify({"status": "ok"})
 
