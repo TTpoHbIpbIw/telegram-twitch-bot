@@ -12,10 +12,10 @@ from telegram.ext import ApplicationBuilder
 # НАСТРОЙКИ
 # =============================
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
-TWITCH_NICK = os.environ["TWITCH_NICK"]          # TTpoHbIpbIw_bot
+TWITCH_NICK = os.environ["TWITCH_NICK"]
 TWITCH_OAUTH = os.environ["TWITCH_OAUTH"]
 
-CHANNEL_NAME = "TTpoHbIpbIw"                     # твой канал
+CHANNEL_NAME = "TTpoHbIpbIw"
 TWITCH_CHANNEL = f"#{CHANNEL_NAME}"
 CHANNEL_OWNER = "ttpohbipbiw"
 
@@ -26,8 +26,7 @@ ANNOUNCE_FILE = "announce.txt"
 last_announce = None
 last_announce_date = None
 user_cooldowns = {}
-
-twitch_started = False   # защита от двойного запуска
+processed_message_ids = set()   # <-- защита от дублей
 
 # =============================
 # FLASK
@@ -63,18 +62,39 @@ def twitch_listener():
     sock.connect(("irc.chat.twitch.tv", 6667))
     sock.send(f"PASS {TWITCH_OAUTH}\r\n".encode())
     sock.send(f"NICK {TWITCH_NICK}\r\n".encode())
+    sock.send("CAP REQ :twitch.tv/tags\r\n".encode())  # Включаем message-id
     sock.send(f"JOIN {TWITCH_CHANNEL}\r\n".encode())
 
     while True:
-        resp = sock.recv(2048).decode()
+        resp = sock.recv(2048).decode(errors="ignore")
 
         if resp.startswith("PING"):
             sock.send("PONG :tmi.twitch.tv\r\n".encode())
             continue
 
         if "PRIVMSG" in resp:
+
+            # === получаем message-id ===
+            message_id = None
+            if "id=" in resp:
+                for tag in resp.split(";"):
+                    if tag.startswith("id="):
+                        message_id = tag.split("=")[1]
+                        break
+
+            # если уже обработано — игнорируем
+            if message_id and message_id in processed_message_ids:
+                continue
+
+            if message_id:
+                processed_message_ids.add(message_id)
+
+                # ограничим размер set
+                if len(processed_message_ids) > 100:
+                    processed_message_ids.clear()
+
             prefix = resp.split("PRIVMSG")[0]
-            username = prefix.split("!")[0].replace(":", "").lower()
+            username = prefix.split("!")[0].split("@")[-1].lower()
             message = resp.split("PRIVMSG")[1].split(":",1)[1].strip()
 
             # анти-луп
@@ -126,16 +146,10 @@ async def telegram_webhook():
 # MAIN
 # =============================
 def main():
-    global twitch_started
-
-    # ставим webhook
     webhook_url = os.environ.get("RENDER_EXTERNAL_URL")
     telegram_app.bot.set_webhook(webhook_url)
 
-    # запускаем Twitch только один раз
-    if not twitch_started:
-        twitch_started = True
-        threading.Thread(target=twitch_listener, daemon=True).start()
+    threading.Thread(target=twitch_listener, daemon=True).start()
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
