@@ -9,7 +9,9 @@ from threading import Thread
 from datetime import datetime
 import time
 
-# --- WEB SERVER FOR RENDER ---
+# =============================
+# WEB SERVER (для Render Free)
+# =============================
 app_web = Flask(__name__)
 
 @app_web.route('/')
@@ -22,13 +24,17 @@ def run_web():
 
 Thread(target=run_web).start()
 
-# --- SETTINGS ---
+# =============================
+# НАСТРОЙКИ
+# =============================
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
-TWITCH_NICK = os.environ["TWITCH_NICK"]
-TWITCH_CHANNEL = f"#{TWITCH_NICK}"
+TWITCH_NICK = os.environ["TWITCH_NICK"]  # TTpoHbIpbIw_bot
 TWITCH_OAUTH = os.environ["TWITCH_OAUTH"]
 
-CHANNEL_OWNER = "ttpohbipbiw"  # твой основной ник (маленькими буквами)
+CHANNEL_NAME = "TTpoHbIpbIw"  # твой основной канал
+TWITCH_CHANNEL = f"#{CHANNEL_NAME}"
+
+CHANNEL_OWNER = "ttpohbipbiw"  # твой основной ник маленькими буквами
 TRIGGER = "#анонс"
 COOLDOWN_SECONDS = 30
 ANNOUNCE_FILE = "announce.txt"
@@ -37,7 +43,9 @@ last_announce = None
 last_announce_date = None
 last_command_time = 0
 
-# --- LOAD FROM FILE ---
+# =============================
+# ЗАГРУЗКА ИЗ ФАЙЛА
+# =============================
 def load_announce():
     global last_announce, last_announce_date
     if os.path.exists(ANNOUNCE_FILE):
@@ -45,9 +53,13 @@ def load_announce():
             lines = f.readlines()
             if len(lines) >= 2:
                 last_announce = lines[0].strip()
-                last_announce_date = datetime.strptime(lines[1].strip(), "%Y-%m-%d").date()
+                last_announce_date = datetime.strptime(
+                    lines[1].strip(), "%Y-%m-%d"
+                ).date()
 
-# --- SAVE TO FILE ---
+# =============================
+# СОХРАНЕНИЕ В ФАЙЛ
+# =============================
 def save_announce(message):
     with open(ANNOUNCE_FILE, "w", encoding="utf-8") as f:
         f.write(message + "\n")
@@ -55,11 +67,17 @@ def save_announce(message):
 
 load_announce()
 
-# --- SEND MESSAGE ---
-def send_to_twitch(sock, message):
-    sock.send(f"PRIVMSG {TWITCH_CHANNEL} :{message[:450]}\r\n".encode("utf-8"))
+# =============================
+# ОТПРАВКА СООБЩЕНИЯ
+# =============================
+def send_message(sock, message):
+    sock.send(
+        f"PRIVMSG {TWITCH_CHANNEL} :{message[:450]}\r\n".encode("utf-8")
+    )
 
-# --- TELEGRAM HANDLER ---
+# =============================
+# TELEGRAM
+# =============================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global last_announce, last_announce_date
 
@@ -69,16 +87,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if text and TRIGGER in text.lower():
             text_no_tags = re.sub(r"#\w+", "", text)
             clean_text = " ".join(text_no_tags.split())
-            final_message = f"📢 {clean_text} 🔴 twitch.tv/{TWITCH_NICK}"
+            final_message = f"📢 {clean_text} 🔴 twitch.tv/{CHANNEL_NAME}"
 
             last_announce = final_message
             last_announce_date = datetime.now().date()
 
             save_announce(final_message)
 
-# --- TWITCH LISTENER ---
+# =============================
+# TWITCH LISTENER
+# =============================
 def listen_to_twitch():
-    global last_command_time, last_announce, last_announce_date
+    global last_command_time
 
     sock = socket.socket()
     sock.connect(("irc.chat.twitch.tv", 6667))
@@ -94,42 +114,43 @@ def listen_to_twitch():
             continue
 
         if "PRIVMSG" in resp:
-            parts = resp.split("PRIVMSG")[0]
-            username = parts.split("!")[0].replace(":", "").lower()
-            message = resp.split("PRIVMSG")[1].split(":",1)[1].strip()
+            prefix = resp.split("PRIVMSG")[0]
+            username = prefix.split("!")[0].replace(":", "").lower()
+            message = resp.split("PRIVMSG")[1].split(":", 1)[1].strip()
 
-            # --- ANTI LOOP ---
+            # === АНТИ-ЛУП ===
             if username == TWITCH_NICK.lower():
                 continue
 
             if message.lower() == "!анонс":
-
                 today = datetime.now().date()
 
-                # --- OWNER WITHOUT COOLDOWN ---
+                # === БЕЗ КУЛДАУНА ДЛЯ ТЕБЯ ===
                 if username == CHANNEL_OWNER:
                     if last_announce and last_announce_date == today:
-                        send_to_twitch(sock, last_announce)
+                        send_message(sock, last_announce)
                     else:
-                        send_to_twitch(sock, "Сегодня не было анонса")
+                        send_message(sock, "Сегодня не было анонса")
                     continue
 
-                # --- VIEWER COOLDOWN ---
+                # === КУЛДАУН ДЛЯ ЗРИТЕЛЕЙ ===
                 now = time.time()
                 if now - last_command_time < COOLDOWN_SECONDS:
-                    send_to_twitch(sock, "Подожди немного перед повторным вызовом команды")
+                    send_message(sock, "Подожди немного перед повторным вызовом команды")
                     continue
 
                 last_command_time = now
 
                 if last_announce and last_announce_date == today:
-                    send_to_twitch(sock, last_announce)
+                    send_message(sock, last_announce)
                 else:
-                    send_to_twitch(sock, "Сегодня не было анонса")
+                    send_message(sock, "Сегодня не было анонса")
 
 Thread(target=listen_to_twitch).start()
 
-# --- START TELEGRAM ---
+# =============================
+# ЗАПУСК TELEGRAM
+# =============================
 telegram_app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 telegram_app.add_handler(MessageHandler(filters.ALL, handle_message))
 telegram_app.run_polling()
