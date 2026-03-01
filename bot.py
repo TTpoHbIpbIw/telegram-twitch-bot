@@ -4,7 +4,23 @@ from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTyp
 import socket
 import os
 import re
+from flask import Flask
+from threading import Thread
 
+# --- мини веб сервер для Render ---
+app_web = Flask(__name__)
+
+@app_web.route('/')
+def home():
+    return "Bot is running!"
+
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    app_web.run(host="0.0.0.0", port=port)
+
+Thread(target=run_web).start()
+
+# --- Telegram + Twitch ---
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 TWITCH_NICK = os.environ["TWITCH_NICK"]
 TWITCH_CHANNEL = f"#{TWITCH_NICK}"
@@ -24,25 +40,15 @@ def send_to_twitch(message):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.channel_post:
 
-        text = None
-
-        if update.channel_post.text:
-            text = update.channel_post.text
-        elif update.channel_post.caption:
-            text = update.channel_post.caption
+        text = update.channel_post.text or update.channel_post.caption
 
         if text and TRIGGER in text.lower():
-
-            # Удаляем все хэштеги
             text_no_tags = re.sub(r"#\w+", "", text)
-
-            # Убираем переносы строк
             clean_text = " ".join(text_no_tags.split())
-
             final_message = f"📢 {clean_text} 🔴 twitch.tv/{TWITCH_NICK}"
-
             send_to_twitch(final_message)
 
-app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-app.add_handler(MessageHandler(filters.ALL, handle_message))
-app.run_polling()
+telegram_app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+telegram_app.add_handler(MessageHandler(filters.ALL, handle_message))
+
+telegram_app.run_polling()
