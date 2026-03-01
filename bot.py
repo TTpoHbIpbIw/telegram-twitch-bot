@@ -23,7 +23,17 @@ def send_to_twitch(message):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.channel_post:
-        text = update.channel_post.text
+
+        text = None
+
+        # Если обычный текст
+        if update.channel_post.text:
+            text = update.channel_post.text
+
+        # Если фото/видео с подписью
+        elif update.channel_post.caption:
+            text = update.channel_post.caption
+
         if text and HASHTAG in text.lower():
             clean_text = re.sub(HASHTAG, "", text, flags=re.IGNORECASE).strip()
             clean_text = clean_text.replace("\n", " ")
