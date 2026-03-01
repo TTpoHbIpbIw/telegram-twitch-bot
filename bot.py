@@ -27,6 +27,7 @@ last_announce = None
 last_announce_date = None
 user_cooldowns = {}
 processed_ids = set()
+sock = None
 
 # =============================
 # FLASK
@@ -65,31 +66,20 @@ telegram_app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
 @app.route("/telegram", methods=["POST"])
 def telegram_webhook():
-    global last_announce, last_announce_date
-
-    print("WEBHOOK HIT", flush=True)
+    global last_announce, last_announce_date, sock
 
     data = request.get_json(force=True, silent=True)
-    print("RAW DATA:", data, flush=True)
-
-    if not data:
-        return jsonify({"status": "no data"})
-
     update = Update.de_json(data, telegram_app.bot)
 
     text = None
 
     if update.channel_post:
-        print("TYPE: channel_post", flush=True)
         text = update.channel_post.text or update.channel_post.caption
-
     elif update.message:
-        print("TYPE: message", flush=True)
         text = update.message.text or update.message.caption
 
-    print("TEXT:", text, flush=True)
-
     if text and TRIGGER in text.lower():
+
         text_no_tags = re.sub(r"#\w+", "", text)
         clean_text = " ".join(text_no_tags.split())
         final_message = f"📢 {clean_text} 🔴 twitch.tv/{CHANNEL_NAME}"
@@ -100,12 +90,19 @@ def telegram_webhook():
 
         print("ANNOUNCE SAVED", flush=True)
 
+        # 🔥 СРАЗУ отправляем в Twitch
+        if sock:
+            sock.send(f"PRIVMSG {TWITCH_CHANNEL} :{final_message}\r\n".encode())
+            print("AUTO SENT TO TWITCH", flush=True)
+
     return jsonify({"status": "ok"})
 
 # =============================
 # TWITCH IRC
 # =============================
 def twitch_listener():
+    global sock
+
     sock = socket.socket()
     sock.connect(("irc.chat.twitch.tv", 6667))
     sock.send(f"PASS {TWITCH_OAUTH}\r\n".encode())
@@ -149,17 +146,20 @@ def twitch_listener():
             if message.lower() == "!анонс":
                 today = datetime.now().date()
 
-                if username == CHANNEL_OWNER:
-                    reply = last_announce if last_announce and last_announce_date == today else "Сегодня не было анонса"
-                else:
+                if username != CHANNEL_OWNER:
                     now = time.time()
                     last_used = user_cooldowns.get(username, 0)
 
                     if now - last_used < COOLDOWN_SECONDS:
-                        reply = "Подожди немного перед повторным вызовом команды"
-                    else:
-                        user_cooldowns[username] = now
-                        reply = last_announce if last_announce and last_announce_date == today else "Сегодня не было анонса"
+                        sock.send(f"PRIVMSG {TWITCH_CHANNEL} :Подожди немного перед повторным вызовом команды\r\n".encode())
+                        continue
+
+                    user_cooldowns[username] = now
+
+                if last_announce and last_announce_date == today:
+                    reply = last_announce
+                else:
+                    reply = "Сегодня не было анонса"
 
                 sock.send(f"PRIVMSG {TWITCH_CHANNEL} :{reply}\r\n".encode())
 
@@ -168,6 +168,5 @@ def twitch_listener():
 # =============================
 if __name__ == "__main__":
     threading.Thread(target=twitch_listener, daemon=True).start()
-
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
