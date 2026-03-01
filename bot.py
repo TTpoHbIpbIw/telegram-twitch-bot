@@ -26,7 +26,7 @@ ANNOUNCE_FILE = "announce.txt"
 last_announce = None
 last_announce_date = None
 user_cooldowns = {}
-processed_message_ids = set()   # <-- защита от дублей
+processed_ids = set()
 
 # =============================
 # FLASK
@@ -34,7 +34,7 @@ processed_message_ids = set()   # <-- защита от дублей
 app = Flask(__name__)
 
 # =============================
-# ФАЙЛ
+# ЗАГРУЗКА ФАЙЛА
 # =============================
 def load_announce():
     global last_announce, last_announce_date
@@ -62,7 +62,7 @@ def twitch_listener():
     sock.connect(("irc.chat.twitch.tv", 6667))
     sock.send(f"PASS {TWITCH_OAUTH}\r\n".encode())
     sock.send(f"NICK {TWITCH_NICK}\r\n".encode())
-    sock.send("CAP REQ :twitch.tv/tags\r\n".encode())  # Включаем message-id
+    sock.send("CAP REQ :twitch.tv/tags\r\n".encode())
     sock.send(f"JOIN {TWITCH_CHANNEL}\r\n".encode())
 
     while True:
@@ -74,7 +74,6 @@ def twitch_listener():
 
         if "PRIVMSG" in resp:
 
-            # === получаем message-id ===
             message_id = None
             if "id=" in resp:
                 for tag in resp.split(";"):
@@ -82,22 +81,18 @@ def twitch_listener():
                         message_id = tag.split("=")[1]
                         break
 
-            # если уже обработано — игнорируем
-            if message_id and message_id in processed_message_ids:
+            if message_id and message_id in processed_ids:
                 continue
 
             if message_id:
-                processed_message_ids.add(message_id)
-
-                # ограничим размер set
-                if len(processed_message_ids) > 100:
-                    processed_message_ids.clear()
+                processed_ids.add(message_id)
+                if len(processed_ids) > 100:
+                    processed_ids.clear()
 
             prefix = resp.split("PRIVMSG")[0]
             username = prefix.split("!")[0].split("@")[-1].lower()
             message = resp.split("PRIVMSG")[1].split(":",1)[1].strip()
 
-            # анти-луп
             if username == TWITCH_NICK.lower():
                 continue
 
@@ -119,15 +114,16 @@ def twitch_listener():
                 sock.send(f"PRIVMSG {TWITCH_CHANNEL} :{reply}\r\n".encode())
 
 # =============================
-# TELEGRAM WEBHOOK
+# TELEGRAM WEBHOOK (без async!)
 # =============================
 telegram_app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
 @app.route("/", methods=["POST"])
-async def telegram_webhook():
+def telegram_webhook():
     global last_announce, last_announce_date
 
-    update = Update.de_json(request.get_json(), telegram_app.bot)
+    data = request.get_json()
+    update = Update.de_json(data, telegram_app.bot)
 
     if update.channel_post:
         text = update.channel_post.text or update.channel_post.caption
@@ -140,14 +136,15 @@ async def telegram_webhook():
             last_announce_date = datetime.now().date()
             save_announce(final_message)
 
-    return "ok"
+    return "OK"
 
 # =============================
 # MAIN
 # =============================
 def main():
     webhook_url = os.environ.get("RENDER_EXTERNAL_URL")
-    telegram_app.bot.set_webhook(webhook_url)
+    if webhook_url:
+        telegram_app.bot.set_webhook(webhook_url)
 
     threading.Thread(target=twitch_listener, daemon=True).start()
 
