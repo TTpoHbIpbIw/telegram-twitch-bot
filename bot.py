@@ -114,6 +114,8 @@ def listen_to_twitch():
             continue
 
         if "PRIVMSG" in resp:
+            if resp.count("PRIVMSG") > 1:
+    continue
             prefix = resp.split("PRIVMSG")[0]
             username = prefix.split("!")[0].replace(":", "").lower()
             message = resp.split("PRIVMSG")[1].split(":", 1)[1].strip()
@@ -146,7 +148,8 @@ def listen_to_twitch():
                 else:
                     send_message(sock, "Сегодня не было анонса")
 
-Thread(target=listen_to_twitch).start()
+if os.environ.get("RUN_MAIN") != "true":
+    Thread(target=listen_to_twitch, daemon=True).start()
 
 # =============================
 # ЗАПУСК TELEGRAM
